@@ -53,7 +53,7 @@ EXT = {
     'TARGA': 'tga'
 }
 
-def init_render(engine='CYCLES', resolution=512, geo_mode=False):
+def init_render(engine='EEVEE', resolution=512, geo_mode=False):
     bpy.context.scene.render.engine = engine
     bpy.context.scene.render.resolution_x = resolution
     bpy.context.scene.render.resolution_y = resolution
@@ -63,13 +63,13 @@ def init_render(engine='CYCLES', resolution=512, geo_mode=False):
     bpy.context.scene.render.film_transparent = True
     
     bpy.context.scene.cycles.device = 'GPU'
-    bpy.context.scene.cycles.samples = 128 if not geo_mode else 1
+    bpy.context.scene.cycles.samples = 32 if not geo_mode else 1
     bpy.context.scene.cycles.filter_type = 'BOX'
     bpy.context.scene.cycles.filter_width = 1
     bpy.context.scene.cycles.diffuse_bounces = 1
     bpy.context.scene.cycles.glossy_bounces = 1
-    bpy.context.scene.cycles.transparent_max_bounces = 3 if not geo_mode else 0
-    bpy.context.scene.cycles.transmission_bounces = 3 if not geo_mode else 1
+    bpy.context.scene.cycles.transparent_max_bounces = 2 if not geo_mode else 0
+    bpy.context.scene.cycles.transmission_bounces = 1 if not geo_mode else 1
     bpy.context.scene.cycles.use_denoising = True
         
     bpy.context.preferences.addons['cycles'].preferences.get_devices()
@@ -937,8 +937,10 @@ def main(arg):
             # 对于特殊map目录，设置一个不会实际保存的路径
             bpy.context.scene.render.filepath = os.path.join('/tmp', f'temp_{frame_id:03d}.png')
             
+        # 使用纯数字命名方式设置输出路径    
         for name, output in outputs.items():
-            output.file_slots[0].path = os.path.join(arg.output_folder, f'{frame_id:03d}_{name}')
+            # 使用纯数字文件名，不添加后缀
+            output.file_slots[0].path = os.path.join(arg.output_folder, f'{frame_id:03d}')
             
         # 渲染面ID视图
         if arg.save_face_id and not arg.save_ccm:
@@ -953,10 +955,32 @@ def main(arg):
         # Render the scene
         bpy.ops.render.render(write_still=True)
         bpy.context.view_layer.update()
+        
+        # 重命名输出文件
         for name, output in outputs.items():
             ext = EXT[output.format.file_format]
-            path = glob.glob(f'{output.file_slots[0].path}*.{ext}')[0]
-            os.rename(path, f'{output.file_slots[0].path}.{ext}')
+            # 查找生成的文件
+            output_pattern = f'{output.file_slots[0].path}*.{ext}'
+            matching_files = glob.glob(output_pattern)
+            
+            if matching_files:
+                path = matching_files[0]
+                # 删除文件名中的后缀，只使用纯数字
+                os.rename(path, f'{output.file_slots[0].path}.{ext}')
+            else:
+                print(f"Warning: No matching file found for pattern {output_pattern}")
+            
+        # 如果是normal map并且可视化可用，使用可视化函数
+        if arg.save_normal and VISUALIZE_NORMALS_AVAILABLE:
+            exr_path = os.path.join(arg.output_folder, f'{frame_id:03d}.exr')
+            png_path = os.path.join(arg.output_folder, f'{frame_id:03d}_map.png')
+            
+            if os.path.exists(exr_path):
+                try:
+                    print(f"Visualizing normal map: {exr_path} -> {png_path}")
+                    visualize_normal_map(exr_path, png_path)
+                except Exception as e:
+                    print(f"Error visualizing normal map: {e}", file=sys.stderr)
             
         # Save camera parameters
         metadata = {
@@ -979,16 +1003,6 @@ def main(arg):
             print(f"[INFO] Camera parameters saved to: {os.path.join(arg.output_folder, 'transforms.json')}")
     else:
         print(f"[INFO] Skipping transforms.json in non-camera directory: {arg.output_folder}")
-        
-    # if arg.save_mesh:
-    #     # triangulate meshes
-    #     unhide_all_objects()
-    #     convert_to_meshes()
-    #     triangulate_meshes()
-    #     print('[INFO] Meshes triangulated.')
-        
-    #     # export ply mesh
-    #     bpy.ops.export_mesh.ply(filepath=os.path.join(arg.output_folder, 'mesh.ply'))
 
 
 if __name__ == '__main__':

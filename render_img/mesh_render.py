@@ -132,7 +132,13 @@ def visualize_maps(base_dir, depth_dir, normal_dir):
             
             # Process each normal map file
             for exr_file in normal_exr_files:
-                png_file = exr_file.replace('.exr', '_map.png')
+                # 提取纯数字文件名
+                base_name = os.path.basename(exr_file)
+                number_part = os.path.splitext(base_name)[0]  # 例如 '000'
+                
+                # 生成可视化文件的路径（在同一目录下）
+                png_file = os.path.join(normal_dir, f"{number_part}_map.png")
+                
                 try:
                     print(f"Processing: {os.path.basename(exr_file)} → {os.path.basename(png_file)}")
                     visualize_normal_map(exr_file, png_file)
