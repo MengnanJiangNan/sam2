@@ -113,6 +113,7 @@ def init_ccm_material(name="CCM_Material", aabb_coords=None):
     
     # 打印调试信息
     if aabb_coords is not None:
+    
         min_x, min_y, min_z, max_x, max_y, max_z = aabb_coords
         print(f"[CCM] Using AABB for coordinate normalization:")
         print(f"[CCM] Min: ({min_x:.4f}, {min_y:.4f}, {min_z:.4f})")
@@ -124,10 +125,16 @@ def init_ccm_material(name="CCM_Material", aabb_coords=None):
         mapping.vector_type = 'POINT'
         
         # 计算缩放和偏移
-        scale_x = 1.0 / (max_x - min_x) if max_x != min_x else 1.0
-        scale_y = 1.0 / (max_y - min_y) if max_y != min_y else 1.0
-        scale_z = 1.0 / (max_z - min_z) if max_z != min_z else 1.0
+        # 颜色分布是集中在物体还是分布在单位box中
+        # scale_x = 1.0 / (max_x - min_x) if max_x != min_x else 1.0
+        # scale_y = 1.0 / (max_y - min_y) if max_y != min_y else 1.0
+        # scale_z = 1.0 / (max_z - min_z) if max_z != min_z else 1.0
         
+        scale_x = 1
+        scale_y = 1
+        scale_z = 1
+
+
         # 设置映射节点的缩放和位置
         mapping.inputs['Scale'].default_value[0] = scale_x
         mapping.inputs['Scale'].default_value[1] = scale_y
@@ -145,30 +152,81 @@ def init_ccm_material(name="CCM_Material", aabb_coords=None):
         print(f"[CCM] Offset: ({-min_x * scale_x:.4f}, {-min_y * scale_y:.4f}, {-min_z * scale_z:.4f})")
     else:
         # 不使用AABB，直接使用位置作为颜色
-        print("[CCM] Using raw world coordinates for CCM (no normalization)")
-        # 可选：添加常量来调整输出颜色范围
-        rgb_scale = nodes.new(type='ShaderNodeRGB')
-        rgb_scale.location = (200, -150)
-        rgb_scale.outputs[0].default_value = (0.5, 0.5, 0.5, 1.0)  # 调整这些值来改变颜色范围
+        print("[CCM] Creating distance-based color mapping with center-focused contrast")
         
-        # 添加向量数学节点来调整原始坐标
-        vec_math = nodes.new(type='ShaderNodeVectorMath')
-        vec_math.location = (200, 0)
-        vec_math.operation = 'MULTIPLY'
-        vec_math.inputs[1].default_value = (0.1, 0.1, 0.1)  # 缩小坐标范围
+        # 创建分离XYZ节点来获取坐标
+        separate_xyz = nodes.new(type='ShaderNodeSeparateXYZ')
+        separate_xyz.location = (0, 0)
         
-        links.new(geometry.outputs['Position'], vec_math.inputs[0])
+        # 计算到中心点的距离
+        vector_math_length = nodes.new(type='ShaderNodeVectorMath')
+        vector_math_length.operation = 'LENGTH'
+        vector_math_length.location = (200, 200)
         
-        # 添加另一个向量数学节点来偏移坐标
-        vec_add = nodes.new(type='ShaderNodeVectorMath')
-        vec_add.location = (300, 0)
-        vec_add.operation = 'ADD'
-        vec_add.inputs[1].default_value = (0.5, 0.5, 0.5)  # 将范围偏移到0-1
+        # 创建非线性映射函数（使用指数函数）
+        math_power = nodes.new(type='ShaderNodeMath')
+        math_power.operation = 'POWER'
+        math_power.location = (400, 200)
+        math_power.inputs[1].default_value = 0.5  # 指数值小于1会使远处的变化更缓慢
         
-        links.new(vec_math.outputs[0], vec_add.inputs[0])
-        links.new(vec_add.outputs[0], emission.inputs['Color'])
+        # 标准化距离
+        math_divide = nodes.new(type='ShaderNodeMath')
+        math_divide.operation = 'DIVIDE'
+        math_divide.location = (300, 200)
+        math_divide.inputs[1].default_value = 5.0  # 调整距离的缩放
         
-        print("[CCM] Applied scaling factor of 0.1 and offset of 0.5 to position coordinates")
+        # 为X、Y、Z创建非线性映射
+        for coord, offset in [('X', 0), ('Y', -100), ('Z', -200)]:
+            # 创建除法节点来标准化坐标
+            math_div = nodes.new(type='ShaderNodeMath')
+            math_div.operation = 'DIVIDE'
+            math_div.location = (200, offset)
+            math_div.inputs[1].default_value = 5.0  # 调整坐标范围
+            
+            # 创建乘法节点来应用距离效果
+            math_mult = nodes.new(type='ShaderNodeMath')
+            math_mult.operation = 'MULTIPLY'
+            math_mult.location = (500, offset)
+            
+            # 创建正弦节点来生成周期性变化
+            math_sin = nodes.new(type='ShaderNodeMath')
+            math_sin.operation = 'SINE'
+            math_sin.location = (600, offset)
+            
+            # 创建映射节点来调整值范围
+            math_map = nodes.new(type='ShaderNodeMapRange')
+            math_map.location = (700, offset)
+            math_map.inputs['From Min'].default_value = -1.0
+            math_map.inputs['From Max'].default_value = 1.0
+            math_map.inputs['To Min'].default_value = 0.0
+            math_map.inputs['To Max'].default_value = 1.0
+            
+            # 连接节点
+            links.new(separate_xyz.outputs[coord], math_div.inputs[0])
+            links.new(math_div.outputs[0], math_mult.inputs[0])
+            links.new(math_power.outputs[0], math_mult.inputs[1])
+            links.new(math_mult.outputs[0], math_sin.inputs[0])
+            links.new(math_sin.outputs[0], math_map.inputs['Value'])
+        
+        # 组合RGB
+        combine_rgb = nodes.new(type='ShaderNodeCombineRGB')
+        combine_rgb.location = (800, 0)
+        
+        # 连接基本节点
+        links.new(geometry.outputs['Position'], separate_xyz.inputs['Vector'])
+        links.new(geometry.outputs['Position'], vector_math_length.inputs[0])
+        links.new(vector_math_length.outputs['Value'], math_divide.inputs[0])
+        links.new(math_divide.outputs[0], math_power.inputs[0])
+        
+        # 连接颜色通道
+        for i, offset in enumerate([0, -100, -200]):
+            math_map = nodes.find_node_by_location(700, offset)
+            links.new(math_map.outputs[0], combine_rgb.inputs[i])
+        
+        # 连接到发射节点
+        links.new(combine_rgb.outputs[0], emission.inputs['Color'])
+        
+        print("[CCM] Created distance-based color variation")
     
     # 连接发射节点到输出
     links.new(emission.outputs['Emission'], output.inputs['Surface'])
